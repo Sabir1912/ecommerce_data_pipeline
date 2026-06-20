@@ -127,7 +127,7 @@ def get_db_engine():
         if db_url.startswith("postgres://"):
             db_url = db_url.replace("postgres://", "postgresql://", 1)
         try:
-            engine = create_engine(db_url)
+            engine = create_engine(db_url, connect_args={"connect_timeout": 3})
             # Verify connectivity
             with engine.connect() as conn:
                 pd.read_sql_query("SELECT 1", conn)
@@ -175,7 +175,7 @@ def get_db_engine():
             continue
         try:
             conn_str = f"postgresql://{cfg['user']}:{cfg['pass']}@{cfg['host']}:{cfg['port']}/{cfg['name']}"
-            engine = create_engine(conn_str)
+            engine = create_engine(conn_str, connect_args={"connect_timeout": 3})
             with engine.connect() as conn:
                 pd.read_sql_query("SELECT 1", conn)
             return engine
