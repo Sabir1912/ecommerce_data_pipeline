@@ -1,0 +1,31 @@
+product_id,product_name,category,price,stock
+P1001,Sports Yoga Mat,Sports,34.89,140
+P1002,Apparel Jeans,Apparel,171.75,52
+P1003,Sports Tennis Racket,Sports,1071.15,44
+P1004,Beauty Lipstick,Beauty,42.98,47
+P1005,Apparel Jeans,Apparel,-49.99,13
+P1006,Beauty Sunscreen,Beauty,860.64,359
+P1007,Beauty Lipstick,Beauty,268.43,301
+P1008,Home & Kitchen Blender,Home & Kitchen,911.77,81
+P1009,Sports Water Bottle,Sports,411.6,79
+P1010,Apparel Jacket,Apparel,127.14,194
+P1011,Electronics Headphones,Electronics,1017.76,309
+P1012,Blender,,877.03,274
+P1013,Electronics Smartwatch,Electronics,99.17,150
+P1014,Sports Backpack,Sports,1063.11,185
+P1015,Beauty Sunscreen,Beauty,846.96,23
+P1016,Sports Dumbbells,Sports,928.82,40
+P1017,Apparel T-Shirt,Apparel,459.25,232
+P1018,Sports Running Shoes,Sports,199.37,-10
+P1019,Apparel Dress,Apparel,324.04,479
+P1020,Sports Tennis Racket,Sports,90.33,325
+P1021,Apparel Socks,Apparel,876.31,83
+P1022,Books Self-Help Book,Books,327.59,473
+P1023,Sports Tennis Racket,Sports,670.55,350
+P1024,Home & Kitchen Blender,Home & Kitchen,278.71,16
+P1025,Home & Kitchen Toaster,Home & Kitchen,324.95,108
+P1026,Beauty Face Wash,Beauty,381.04,335
+P1027,Books Self-Help Book,Books,1062.2,329
+P1028,Books History Book,Books,321.53,126
+P1029,Sports Backpack,Sports,649.08,382
+P1030,Beauty Lipstick,Beauty,1077.9,204
