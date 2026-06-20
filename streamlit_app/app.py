@@ -313,7 +313,7 @@ if page == "🏠 Executive Overview":
             margin=dict(l=40, r=40, t=40, b=40),
             transition=dict(duration=800, easing="cubic-in-out")
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
     except Exception as e:
         st.info("No monthly trend data available. Complete a pipeline run.")
 
@@ -352,7 +352,7 @@ elif page == "📈 Sales & Products":
                     template="plotly_dark",
                     transition=dict(duration=800, easing="cubic-in-out")
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
             except Exception as e:
                 st.write("Category distribution not ready yet.")
         else:
@@ -369,7 +369,7 @@ elif page == "📈 Sales & Products":
                 template="plotly_dark",
                 transition=dict(duration=800, easing="cubic-in-out")
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         except Exception as e:
             st.write("Status breakdown not ready yet.")
 
@@ -401,7 +401,7 @@ elif page == "📈 Sales & Products":
                     zaxis=dict(backgroundcolor="rgba(0, 0, 0, 0)")
                 )
             )
-            st.plotly_chart(fig_3d, use_container_width=True)
+            st.plotly_chart(fig_3d, width="stretch")
         except Exception as e:
             st.write("Product portfolio details not computed yet.")
     else:
@@ -416,7 +416,7 @@ elif page == "📈 Sales & Products":
             # Styled Table display
             st.dataframe(
                 prod_df.style.format({"total_revenue": "${:,.2f}", "quantity_sold": "{:,}"}),
-                use_container_width=True
+                width="stretch"
             )
         except Exception as e:
             st.write("Best sellers data not computed yet.")
@@ -473,7 +473,7 @@ elif page == "👥 Customer Analytics":
                 ),
                 transition=dict(duration=800, easing="cubic-in-out")
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         except Exception as e:
             st.write("Country distribution not available.")
 
@@ -503,7 +503,7 @@ elif page == "👥 Customer Analytics":
                     template="plotly_dark",
                     transition=dict(duration=800, easing="cubic-in-out")
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
             except Exception as e:
                 st.write("Segmentation not computed.")
         else:
@@ -556,7 +556,7 @@ elif page == "👥 Customer Analytics":
                     zaxis=dict(backgroundcolor="rgba(0, 0, 0, 0)")
                 )
             )
-            st.plotly_chart(fig_cust_3d, use_container_width=True)
+            st.plotly_chart(fig_cust_3d, width="stretch")
         except Exception as e:
             st.write("CLV segmentation space details not computed yet.")
     else:
@@ -573,7 +573,7 @@ elif page == "👥 Customer Analytics":
                     "avg_order_value": "${:,.2f}",
                     "order_count": "{:,}"
                 }),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True
             )
         except Exception as e:
@@ -597,7 +597,7 @@ elif page == "⚙️ Operations & Quality":
                 "total_records_processed": "{:,}",
                 "total_errors_found": "{:,}"
             }),
-            use_container_width=True,
+            width="stretch",
             hide_index=True
         )
         
@@ -629,7 +629,7 @@ elif page == "⚙️ Operations & Quality":
         
         # Show table overview of record counts
         st.markdown("#### Table Volume Summary")
-        st.dataframe(total_records_df.rename(columns={"anomalies_count": "total_records_checked"}).drop(columns=["metric"]), use_container_width=True, hide_index=True)
+        st.dataframe(total_records_df.rename(columns={"anomalies_count": "total_records_checked"}).drop(columns=["metric"]), width="stretch", hide_index=True)
         
         # Show details of validation anomalies isolated
         st.markdown("#### Validation Failures and Anomalies Isolated (Quarantined)")
@@ -641,7 +641,7 @@ elif page == "⚙️ Operations & Quality":
             
         st.dataframe(
             anomalies_df.style.applymap(highlight_errors, subset=['anomalies_count']),
-            use_container_width=True,
+            width="stretch",
             hide_index=True
         )
         
