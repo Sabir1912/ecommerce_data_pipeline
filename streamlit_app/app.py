@@ -112,24 +112,76 @@ st.markdown("""
 # Database connection helper
 @st.cache_resource
 def get_db_engine():
-    # Attempt container network hostname first, fallback to localhost
-    hosts = [os.environ.get('DB_HOST', 'postgres'), 'localhost']
+    # 1. Try DATABASE_URL from Streamlit secrets (highly recommended for Streamlit Cloud) or env variables
+    db_url = None
+    if "postgres" in st.secrets and isinstance(st.secrets["postgres"], dict) and "url" in st.secrets["postgres"]:
+        db_url = st.secrets["postgres"]["url"]
+    elif "DATABASE_URL" in st.secrets:
+        db_url = st.secrets["DATABASE_URL"]
+    elif "database_url" in st.secrets:
+        db_url = st.secrets["database_url"]
+    else:
+        db_url = os.environ.get("DATABASE_URL", None)
+
+    if db_url:
+        if db_url.startswith("postgres://"):
+            db_url = db_url.replace("postgres://", "postgresql://", 1)
+        try:
+            engine = create_engine(db_url)
+            # Verify connectivity
+            with engine.connect() as conn:
+                pd.read_sql_query("SELECT 1", conn)
+            return engine
+        except Exception:
+            pass
+
+    # 2. Try structured connection fields from secrets, environment variables, or defaults
+    configs = []
+    
+    # Try structured postgres secret group
+    if "postgres" in st.secrets and isinstance(st.secrets["postgres"], dict):
+        sec = st.secrets["postgres"]
+        configs.append({
+            'host': sec.get("host"),
+            'port': sec.get("port", "5432"),
+            'name': sec.get("database"),
+            'user': sec.get("username"),
+            'pass': sec.get("password")
+        })
+        
+    # Try individual secrets
+    if any(k in st.secrets for k in ["DB_HOST", "db_host"]):
+        configs.append({
+            'host': st.secrets.get("DB_HOST", st.secrets.get("db_host", "localhost")),
+            'port': st.secrets.get("DB_PORT", st.secrets.get("db_port", "5432")),
+            'name': st.secrets.get("DB_NAME", st.secrets.get("db_name", "ecommerce_dw")),
+            'user': st.secrets.get("DB_USER", st.secrets.get("db_user", "postgres")),
+            'pass': st.secrets.get("DB_PASSWORD", st.secrets.get("db_password", "postgres"))
+        })
+
+    # Add environment configurations and defaults
+    env_host = os.environ.get('DB_HOST', 'postgres')
     db_port = os.environ.get('DB_PORT', '5432')
     db_name = os.environ.get('DB_NAME', 'ecommerce_dw')
     db_user = os.environ.get('DB_USER', 'postgres')
     db_password = os.environ.get('DB_PASSWORD', 'postgres')
     
-    for host in hosts:
+    configs.append({'host': env_host, 'port': db_port, 'name': db_name, 'user': db_user, 'pass': db_password})
+    configs.append({'host': 'localhost', 'port': db_port, 'name': db_name, 'user': db_user, 'pass': db_password})
+
+    # Try each configuration in sequence
+    for cfg in configs:
+        if not cfg.get('host') or not cfg.get('user'):
+            continue
         try:
-            conn_str = f"postgresql://{db_user}:{db_password}@{host}:{db_port}/{db_name}"
+            conn_str = f"postgresql://{cfg['user']}:{cfg['pass']}@{cfg['host']}:{cfg['port']}/{cfg['name']}"
             engine = create_engine(conn_str)
-            # Test connection
             with engine.connect() as conn:
                 pd.read_sql_query("SELECT 1", conn)
             return engine
         except Exception:
             continue
-    # If all fail, return None (will show message to run pipeline)
+            
     return None
 
 engine = get_db_engine()
@@ -144,8 +196,8 @@ st.markdown("""
 
 if engine is None:
     st.error("⚠️ **Could not connect to PostgreSQL Database (`ecommerce_dw`).**")
-    st.warning("Please make sure your Docker containers are running and the Airflow pipeline has successfully executed the Spark ETL task.")
-    st.info("To start the services, run:\n`docker-compose up -d` in the project directory.")
+    st.warning("Please make sure your database is running and credentials are set in Streamlit Secrets or Environment Variables.")
+    st.info("To start local services, run:\n`docker-compose up -d` in the project directory.")
     st.stop()
 
 # Sidebar navigation
@@ -156,8 +208,13 @@ page = st.sidebar.radio(
     ["🏠 Executive Overview", "📈 Sales & Products", "👥 Customer Analytics", "⚙️ Operations & Quality"]
 )
 
-# Fetch common data
-@st.cache_data
+# Active cache busting control for real-time pipeline run refresh on cloud
+if st.sidebar.button("🔄 Refresh Data"):
+    st.cache_data.clear()
+    st.rerun()
+
+# Fetch common data with a 10-minute TTL to keep Streamlit Cloud fast & efficient
+@st.cache_data(ttl=600)
 def load_query(query):
     with engine.connect() as conn:
         return pd.read_sql_query(query, conn)
@@ -170,15 +227,20 @@ if page == "🏠 Executive Overview":
     
     # Load KPIs
     try:
-        total_rev_df = load_query("SELECT SUM(amount) as revenue FROM raw_clean.payments")
-        total_orders_df = load_query("SELECT COUNT(*) as order_count FROM raw_clean.orders WHERE status != 'Cancelled'")
-        total_cust_df = load_query("SELECT COUNT(DISTINCT customer_id) as cust_count FROM raw_clean.orders")
-        aov_df = load_query("SELECT AVG(total_amount) as aov FROM raw_clean.orders WHERE status != 'Cancelled'")
+        # Combined queries into a single query to reduce database round-trips over the web connection
+        kpi_query = """
+            SELECT 
+                (SELECT SUM(amount) FROM raw_clean.payments) as revenue,
+                (SELECT COUNT(*) FROM raw_clean.orders WHERE status != 'Cancelled') as order_count,
+                (SELECT COUNT(DISTINCT customer_id) FROM raw_clean.orders) as cust_count,
+                (SELECT AVG(total_amount) FROM raw_clean.orders WHERE status != 'Cancelled') as aov
+        """
+        kpi_df = load_query(kpi_query)
         
-        revenue = total_rev_df['revenue'].iloc[0] or 0.0
-        orders = total_orders_df['order_count'].iloc[0] or 0
-        customers = total_cust_df['cust_count'].iloc[0] or 0
-        aov = aov_df['aov'].iloc[0] or 0.0
+        revenue = kpi_df['revenue'].iloc[0] or 0.0
+        orders = kpi_df['order_count'].iloc[0] or 0
+        customers = kpi_df['cust_count'].iloc[0] or 0
+        aov = kpi_df['aov'].iloc[0] or 0.0
         
         # Display custom styled cards in columns
         col1, col2, col3, col4 = st.columns(4)
@@ -261,28 +323,39 @@ if page == "🏠 Executive Overview":
 elif page == "📈 Sales & Products":
     st.subheader("Sales and Category Analysis")
     
+    # Fetch database record in one batch to perform in-memory aggregations with Pandas (reduces 3 queries to 1)
+    portfolio_query = """
+        SELECT p.product_id, p.product_name, p.category, p.price, p.stock, 
+               pp.quantity_sold, pp.total_revenue
+        FROM analytics.product_performance pp
+        JOIN raw_clean.products p ON pp.product_id = p.product_id
+    """
+    portfolio_df = None
+    try:
+        portfolio_df = load_query(portfolio_query)
+    except Exception as e:
+        st.write("Product portfolio details not computed yet.")
+    
     col1, col2 = st.columns(2)
     
     with col1:
         st.markdown("#### Revenue distribution by Product Category")
-        try:
-            cat_query = """
-                SELECT category, SUM(total_revenue) as revenue 
-                FROM analytics.product_performance 
-                GROUP BY category 
-                ORDER BY revenue DESC
-            """
-            cat_df = load_query(cat_query)
-            fig = px.pie(cat_df, values='revenue', names='category', hole=0.4,
-                         color_discrete_sequence=px.colors.qualitative.Pastel)
-            pull_list = [0.1] + [0] * (len(cat_df) - 1)
-            fig.update_traces(textposition='inside', textinfo='percent+label', pull=pull_list)
-            fig.update_layout(
-                template="plotly_dark",
-                transition=dict(duration=800, easing="cubic-in-out")
-            )
-            st.plotly_chart(fig, use_container_width=True)
-        except Exception as e:
+        if portfolio_df is not None:
+            try:
+                # Group and aggregate in-memory with Pandas to avoid extra database query
+                cat_df = portfolio_df.groupby('category')['total_revenue'].sum().reset_index().rename(columns={'total_revenue': 'revenue'}).sort_values(by='revenue', ascending=False)
+                fig = px.pie(cat_df, values='revenue', names='category', hole=0.4,
+                             color_discrete_sequence=px.colors.qualitative.Pastel)
+                pull_list = [0.1] + [0] * (len(cat_df) - 1)
+                fig.update_traces(textposition='inside', textinfo='percent+label', pull=pull_list)
+                fig.update_layout(
+                    template="plotly_dark",
+                    transition=dict(duration=800, easing="cubic-in-out")
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            except Exception as e:
+                st.write("Category distribution not ready yet.")
+        else:
             st.write("Category distribution not ready yet.")
 
     with col2:
@@ -302,58 +375,52 @@ elif page == "📈 Sales & Products":
 
     st.markdown("---")
     st.subheader("📦 Interactive 3D Product Performance Space")
-    try:
-        portfolio_query = """
-            SELECT p.product_name, p.category, p.price, p.stock, 
-                   pp.quantity_sold, pp.total_revenue
-            FROM analytics.product_performance pp
-            JOIN raw_clean.products p ON pp.product_id = p.product_id
-        """
-        portfolio_df = load_query(portfolio_query)
-        fig_3d = px.scatter_3d(
-            portfolio_df,
-            x='price',
-            y='stock',
-            z='quantity_sold',
-            color='category',
-            size='total_revenue',
-            hover_name='product_name',
-            labels={
-                'price': 'Price ($)',
-                'stock': 'Current Stock',
-                'quantity_sold': 'Units Sold'
-            },
-            color_discrete_sequence=px.colors.qualitative.Bold
-        )
-        fig_3d.update_layout(
-            template="plotly_dark",
-            margin=dict(l=0, r=0, b=0, t=30),
-            scene=dict(
-                xaxis=dict(backgroundcolor="rgba(0, 0, 0, 0)"),
-                yaxis=dict(backgroundcolor="rgba(0, 0, 0, 0)"),
-                zaxis=dict(backgroundcolor="rgba(0, 0, 0, 0)")
+    if portfolio_df is not None:
+        try:
+            fig_3d = px.scatter_3d(
+                portfolio_df,
+                x='price',
+                y='stock',
+                z='quantity_sold',
+                color='category',
+                size='total_revenue',
+                hover_name='product_name',
+                labels={
+                    'price': 'Price ($)',
+                    'stock': 'Current Stock',
+                    'quantity_sold': 'Units Sold'
+                },
+                color_discrete_sequence=px.colors.qualitative.Bold
             )
-        )
-        st.plotly_chart(fig_3d, use_container_width=True)
-    except Exception as e:
+            fig_3d.update_layout(
+                template="plotly_dark",
+                margin=dict(l=0, r=0, b=0, t=30),
+                scene=dict(
+                    xaxis=dict(backgroundcolor="rgba(0, 0, 0, 0)"),
+                    yaxis=dict(backgroundcolor="rgba(0, 0, 0, 0)"),
+                    zaxis=dict(backgroundcolor="rgba(0, 0, 0, 0)")
+                )
+            )
+            st.plotly_chart(fig_3d, use_container_width=True)
+        except Exception as e:
+            st.write("Product portfolio details not computed yet.")
+    else:
         st.write("Product portfolio details not computed yet.")
 
     st.markdown("---")
     st.subheader("🏆 Top Performing Products (Best Sellers)")
-    try:
-        prod_query = """
-            SELECT product_name, category, quantity_sold, total_revenue
-            FROM analytics.product_performance
-            ORDER BY total_revenue DESC
-            LIMIT 10
-        """
-        prod_df = load_query(prod_query)
-        # Styled Table display
-        st.dataframe(
-            prod_df.style.format({"total_revenue": "${:,.2f}", "quantity_sold": "{:,}"}),
-            use_container_width=True
-        )
-    except Exception as e:
+    if portfolio_df is not None:
+        try:
+            # Sort and select top 10 best sellers in-memory with Pandas to avoid extra database query
+            prod_df = portfolio_df[['product_name', 'category', 'quantity_sold', 'total_revenue']].sort_values(by='total_revenue', ascending=False).head(10)
+            # Styled Table display
+            st.dataframe(
+                prod_df.style.format({"total_revenue": "${:,.2f}", "quantity_sold": "{:,}"}),
+                use_container_width=True
+            )
+        except Exception as e:
+            st.write("Best sellers data not computed yet.")
+    else:
         st.write("Best sellers data not computed yet.")
 
 # ----------------------------------------------------
@@ -362,6 +429,13 @@ elif page == "📈 Sales & Products":
 elif page == "👥 Customer Analytics":
     st.subheader("Customer Segmentations & Leaderboard")
     
+    # Load all top customer data in a single query (reduces 3 queries to 1)
+    cust_df = None
+    try:
+        cust_df = load_query("SELECT rank, name, country, total_spent, order_count, avg_order_value FROM analytics.top_customers ORDER BY rank")
+    except Exception as e:
+        pass
+
     col1, col2 = st.columns([1, 1])
     
     with col1:
@@ -405,94 +479,106 @@ elif page == "👥 Customer Analytics":
 
     with col2:
         st.markdown("#### Customer Segments (by Lifetime Spend)")
-        try:
-            segments_query = """
-                SELECT 
-                    CASE 
-                        WHEN total_spent >= 2500 THEN 'VIP Platinum (Spent > $2,500)'
-                        WHEN total_spent >= 1000 AND total_spent < 2500 THEN 'Gold Tier ($1,000 - $2,500)'
-                        WHEN total_spent >= 300 AND total_spent < 1000 THEN 'Silver Tier ($300 - $1,000)'
-                        ELSE 'Bronze Member (< $300)'
-                    END as segment,
-                    COUNT(*) as customer_count
-                FROM analytics.top_customers
-                GROUP BY segment
-                ORDER BY customer_count DESC
-            """
-            segment_df = load_query(segments_query)
-            fig = px.pie(segment_df, values='customer_count', names='segment', hole=0.4,
-                         color_discrete_sequence=px.colors.sequential.Electric)
-            pull_list = [0.1] + [0] * (len(segment_df) - 1)
-            fig.update_traces(textposition='inside', textinfo='percent+label', pull=pull_list)
-            fig.update_layout(
-                template="plotly_dark",
-                transition=dict(duration=800, easing="cubic-in-out")
-            )
-            st.plotly_chart(fig, use_container_width=True)
-        except Exception as e:
+        if cust_df is not None:
+            try:
+                # Group and count in-memory using Pandas to avoid database queries
+                def classify_segment_label(spent):
+                    if spent >= 2500:
+                        return 'VIP Platinum (Spent > $2,500)'
+                    elif spent >= 1000:
+                        return 'Gold Tier ($1,000 - $2,500)'
+                    elif spent >= 300:
+                        return 'Silver Tier ($300 - $1,000)'
+                    else:
+                        return 'Bronze Member (< $300)'
+                
+                segment_counts = cust_df['total_spent'].apply(classify_segment_label).value_counts().reset_index()
+                segment_counts.columns = ['segment', 'customer_count']
+                
+                fig = px.pie(segment_counts, values='customer_count', names='segment', hole=0.4,
+                             color_discrete_sequence=px.colors.sequential.Electric)
+                pull_list = [0.1] + [0] * (len(segment_counts) - 1)
+                fig.update_traces(textposition='inside', textinfo='percent+label', pull=pull_list)
+                fig.update_layout(
+                    template="plotly_dark",
+                    transition=dict(duration=800, easing="cubic-in-out")
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            except Exception as e:
+                st.write("Segmentation not computed.")
+        else:
             st.write("Segmentation not computed.")
 
     st.markdown("---")
     st.subheader("👥 Interactive 3D Customer Value Space (CLV vs. Purchase Frequency)")
-    try:
-        segments_query = """
-            SELECT name, country, total_spent, order_count, avg_order_value,
-                CASE 
-                    WHEN total_spent >= 2500 THEN 'VIP Platinum'
-                    WHEN total_spent >= 1000 AND total_spent < 2500 THEN 'Gold Tier'
-                    WHEN total_spent >= 300 AND total_spent < 1000 THEN 'Silver Tier'
-                    ELSE 'Bronze Member'
-                END as segment
-            FROM analytics.top_customers
-        """
-        cust_df = load_query(segments_query)
-        fig_cust_3d = px.scatter_3d(
-            cust_df,
-            x='order_count',
-            y='avg_order_value',
-            z='total_spent',
-            color='segment',
-            symbol='segment',
-            hover_name='name',
-            labels={
-                'order_count': 'Total Orders',
-                'avg_order_value': 'Avg Order Value ($)',
-                'total_spent': 'Total CLV ($)'
-            },
-            color_discrete_map={
-                'VIP Platinum': '#ff4b4b',
-                'Gold Tier': '#ffaa00',
-                'Silver Tier': '#00aaff',
-                'Bronze Member': '#888888'
-            }
-        )
-        fig_cust_3d.update_layout(
-            template="plotly_dark",
-            margin=dict(l=0, r=0, b=0, t=30),
-            scene=dict(
-                xaxis=dict(backgroundcolor="rgba(0, 0, 0, 0)"),
-                yaxis=dict(backgroundcolor="rgba(0, 0, 0, 0)"),
-                zaxis=dict(backgroundcolor="rgba(0, 0, 0, 0)")
+    if cust_df is not None:
+        try:
+            # Map segments in Pandas
+            def classify_segment_simple(spent):
+                if spent >= 2500:
+                    return 'VIP Platinum'
+                elif spent >= 1000:
+                    return 'Gold Tier'
+                elif spent >= 300:
+                    return 'Silver Tier'
+                else:
+                    return 'Bronze Member'
+            
+            plot_cust_df = cust_df.copy()
+            plot_cust_df['segment'] = plot_cust_df['total_spent'].apply(classify_segment_simple)
+            
+            fig_cust_3d = px.scatter_3d(
+                plot_cust_df,
+                x='order_count',
+                y='avg_order_value',
+                z='total_spent',
+                color='segment',
+                symbol='segment',
+                hover_name='name',
+                labels={
+                    'order_count': 'Total Orders',
+                    'avg_order_value': 'Avg Order Value ($)',
+                    'total_spent': 'Total CLV ($)'
+                },
+                color_discrete_map={
+                    'VIP Platinum': '#ff4b4b',
+                    'Gold Tier': '#ffaa00',
+                    'Silver Tier': '#00aaff',
+                    'Bronze Member': '#888888'
+                }
             )
-        )
-        st.plotly_chart(fig_cust_3d, use_container_width=True)
-    except Exception as e:
+            fig_cust_3d.update_layout(
+                template="plotly_dark",
+                margin=dict(l=0, r=0, b=0, t=30),
+                scene=dict(
+                    xaxis=dict(backgroundcolor="rgba(0, 0, 0, 0)"),
+                    yaxis=dict(backgroundcolor="rgba(0, 0, 0, 0)"),
+                    zaxis=dict(backgroundcolor="rgba(0, 0, 0, 0)")
+                )
+            )
+            st.plotly_chart(fig_cust_3d, use_container_width=True)
+        except Exception as e:
+            st.write("CLV segmentation space details not computed yet.")
+    else:
         st.write("CLV segmentation space details not computed yet.")
 
     st.markdown("---")
     st.subheader("💎 Customer Lifetime Value (CLV) Leaderboard")
-    try:
-        top_cust_df = load_query("SELECT rank, name, country, total_spent, order_count, avg_order_value FROM analytics.top_customers LIMIT 15")
-        st.dataframe(
-            top_cust_df.style.format({
-                "total_spent": "${:,.2f}",
-                "avg_order_value": "${:,.2f}",
-                "order_count": "{:,}"
-            }),
-            use_container_width=True,
-            hide_index=True
-        )
-    except Exception as e:
+    if cust_df is not None:
+        try:
+            top_cust_df = cust_df.head(15)
+            st.dataframe(
+                top_cust_df.style.format({
+                    "total_spent": "${:,.2f}",
+                    "avg_order_value": "${:,.2f}",
+                    "order_count": "{:,}"
+                }),
+                use_container_width=True,
+                hide_index=True
+            )
+        except Exception as e:
+            st.write("Leaderboard not populated.")
+    else:
         st.write("Leaderboard not populated.")
 
 # ----------------------------------------------------
